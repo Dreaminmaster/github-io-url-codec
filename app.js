@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const codec = window.UrlGlyphCodec;
+  const codec = window.GlyphTextCodec;
   const elements = {
     form: document.querySelector("#encode-form"),
     input: document.querySelector("#url-input"),
@@ -37,8 +37,33 @@
     return url.href;
   }
 
-  function makeDirectUrl(mode, payload) {
-    return `${baseUrl()}${mode}/${payload}`;
+  function normalizeHttpUrl(value) {
+    let candidate = String(value || "").trim();
+    if (!candidate) throw new Error("请输入网址");
+    if (!/^[a-z][a-z\d+.-]*:/i.test(candidate)) candidate = `https://${candidate}`;
+    let parsed;
+    try {
+      parsed = new URL(candidate);
+    } catch {
+      throw new Error("网址格式不正确");
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error("只支持 http:// 和 https:// 网址");
+    }
+    return parsed.href;
+  }
+
+  function isHttpUrl(value) {
+    try {
+      const parsed = new URL(value);
+      return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch {
+      return false;
+    }
+  }
+
+  function makeShareUrl(mode, payload) {
+    return `${baseUrl()}#/${mode}/${encodeURIComponent(payload)}`;
   }
 
   function showStatus(message, kind = "info") {
@@ -54,13 +79,11 @@
   function generate(event) {
     event.preventDefault();
     clearStatus();
-
     try {
-      const normalized = codec.normalizeHttpUrl(elements.input.value);
+      const normalized = normalizeHttpUrl(elements.input.value);
       const mode = selectedMode();
       const payload = codec.encode(normalized, mode);
-      lastGeneratedUrl = makeDirectUrl(mode, payload);
-
+      lastGeneratedUrl = makeShareUrl(mode, payload);
       elements.output.textContent = lastGeneratedUrl;
       elements.output.href = lastGeneratedUrl;
       elements.open.href = lastGeneratedUrl;
@@ -77,7 +100,6 @@
     if (!lastGeneratedUrl) return;
     try {
       await navigator.clipboard.writeText(lastGeneratedUrl);
-      showStatus("已复制到剪贴板", "success");
     } catch {
       const area = document.createElement("textarea");
       area.value = lastGeneratedUrl;
@@ -87,30 +109,17 @@
       area.select();
       document.execCommand("copy");
       area.remove();
-      showStatus("已复制到剪贴板", "success");
     }
+    showStatus("已复制到剪贴板", "success");
   }
 
   function parseEncodedUrl(value) {
-    const parsed = new URL(codec.normalizeHttpUrl(value));
-    const parts = parsed.pathname.split("/").filter(Boolean);
-    const modeIndex = parts.findIndex((part) => Object.values(codec.MODES).includes(part));
-
-    if (modeIndex !== -1 && parts.length > modeIndex + 1) {
-      const mode = parts[modeIndex];
-      const raw = parts.slice(modeIndex + 1).join("/");
-      return { mode, payload: mode === codec.MODES.LOOKALIKE ? decodeURIComponent(raw) : raw };
-    }
-
-    const hashMatch = parsed.hash.match(/^#\/(p|look|githubio)\/(.+)$/s);
-    if (hashMatch) {
-      return {
-        mode: hashMatch[1],
-        payload: hashMatch[1] === codec.MODES.LOOKALIKE ? decodeURIComponent(hashMatch[2]) : hashMatch[2]
-      };
-    }
-
-    throw new Error("没有在网址中找到可识别的编码");
+    const text = String(value || "").trim();
+    if (!text) throw new Error("请粘贴编码网址");
+    const parsed = new URL(text, baseUrl());
+    const match = parsed.hash.match(/^#\/(p|look|githubio)\/(.+)$/s);
+    if (!match) throw new Error("没有在网址中找到可识别的编码");
+    return { mode: match[1], payload: decodeURIComponent(match[2]) };
   }
 
   function decodeManually() {
@@ -119,7 +128,7 @@
     try {
       const { mode, payload } = parseEncodedUrl(elements.decodeInput.value);
       const decoded = codec.decode(payload, mode);
-      if (!codec.isSafeHttpUrl(decoded)) throw new Error("解码结果不是安全的 HTTP(S) 网址");
+      if (!isHttpUrl(decoded)) throw new Error("解码结果不是 HTTP(S) 网址");
       elements.decoded.textContent = decoded;
       elements.decoded.href = decoded;
       elements.decoded.hidden = false;
@@ -141,17 +150,13 @@
     setTheme(saved || (systemDark ? "dark" : "light"));
   }
 
-  function tryAutoRedirect() {
+  function showEncodedDestination() {
     const match = window.location.hash.match(/^#\/(p|look|githubio)\/(.+)$/s);
     if (!match) return false;
-
     document.body.classList.add("redirecting");
-    const mode = match[1];
-    const payload = mode === codec.MODES.LOOKALIKE ? decodeURIComponent(match[2]) : match[2];
-
     try {
-      const destination = codec.decode(payload, mode);
-      if (!codec.isSafeHttpUrl(destination)) throw new Error("解码结果不是 HTTP(S) 网址");
+      const destination = codec.decode(decodeURIComponent(match[2]), match[1]);
+      if (!isHttpUrl(destination)) throw new Error("解码结果不是 HTTP(S) 网址");
       const parsedDestination = new URL(destination);
       elements.redirectHost.textContent = parsedDestination.hostname;
       elements.redirectTarget.textContent = destination;
@@ -159,7 +164,7 @@
       elements.cancelButton.href = baseUrl();
     } catch (error) {
       document.body.classList.remove("redirecting");
-      showStatus(`无法打开：${error.message}`, "error");
+      showStatus(`无法读取：${error.message}`, "error");
       history.replaceState(null, "", baseUrl());
     }
     return true;
@@ -169,12 +174,14 @@
   elements.copy.addEventListener("click", copyGenerated);
   elements.decodeButton.addEventListener("click", decodeManually);
   elements.decodeInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") decodeManually();
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      decodeManually();
+    }
   });
   elements.theme.addEventListener("click", () => {
     setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
   });
-
   document.querySelectorAll('input[name="mode"]').forEach((radio) => {
     radio.addEventListener("change", () => {
       if (elements.input.value.trim()) elements.form.requestSubmit();
@@ -182,5 +189,5 @@
   });
 
   initializeTheme();
-  tryAutoRedirect();
+  showEncodedDestination();
 })();
