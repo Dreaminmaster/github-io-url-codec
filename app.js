@@ -1,7 +1,7 @@
 (() => {
   "use strict";
 
-  const codec = window.GlyphTextCodec;
+  const codec = window.UrlGlyphCodec;
   const elements = {
     form: document.querySelector("#encode-form"),
     input: document.querySelector("#url-input"),
