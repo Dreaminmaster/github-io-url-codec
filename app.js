@@ -37,8 +37,17 @@
     return url.href;
   }
 
-  function makeShareUrl(mode, payload) {
-    return new URL(`${mode}/${payload}`, baseUrl()).href;
+  function inferMode(payload) {
+    if (/^[p.]+$/.test(payload)) return codec.MODES.P_RUNS;
+    if (/^[pρрᴘ]+$/u.test(payload)) return codec.MODES.LOOKALIKE;
+    if (/^(?:github\.io)(?:\.github\.io){0,3}(?:\/(?:github\.io)(?:\.github\.io){0,3})*$/.test(payload)) {
+      return codec.MODES.GITHUB_IO;
+    }
+    throw new Error("无法识别编码类型");
+  }
+
+  function makeShareUrl(payload) {
+    return new URL(payload, baseUrl()).href;
   }
 
   function showStatus(message, kind = "info") {
@@ -59,7 +68,7 @@
       const normalized = codec.normalizeHttpUrl(elements.input.value);
       const mode = selectedMode();
       const payload = codec.encode(normalized, mode);
-      lastGeneratedUrl = makeShareUrl(mode, payload);
+      lastGeneratedUrl = makeShareUrl(payload);
 
       elements.output.textContent = lastGeneratedUrl;
       elements.output.href = lastGeneratedUrl;
@@ -92,21 +101,19 @@
 
   function parseEncodedUrl(value) {
     const parsed = new URL(codec.normalizeHttpUrl(value));
-    const parts = parsed.pathname.split("/").filter(Boolean);
-    const modes = Object.values(codec.MODES);
-    const modeIndex = parts.findIndex((part) => modes.includes(part));
+    const currentBasePath = new URL(baseUrl()).pathname;
+    let payload;
 
-    if (modeIndex !== -1 && parts.length > modeIndex + 1) {
-      return {
-        mode: parts[modeIndex],
-        payload: decodeURIComponent(parts.slice(modeIndex + 1).join("/"))
-      };
+    if (parsed.origin === location.origin && parsed.pathname.startsWith(currentBasePath)) {
+      payload = decodeURIComponent(parsed.pathname.slice(currentBasePath.length));
+    } else {
+      payload = decodeURIComponent(parsed.pathname.replace(/^\//, ""));
     }
+
+    if (payload) return { mode: inferMode(payload), payload };
 
     const hashMatch = parsed.hash.match(/^#\/(p|look|githubio)\/(.+)$/s);
-    if (hashMatch) {
-      return { mode: hashMatch[1], payload: decodeURIComponent(hashMatch[2]) };
-    }
+    if (hashMatch) return { mode: hashMatch[1], payload: decodeURIComponent(hashMatch[2]) };
 
     throw new Error("没有在网址中找到可识别的编码");
   }
