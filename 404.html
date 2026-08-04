@@ -30,56 +30,64 @@
   <script>
     (() => {
       "use strict";
-      const modes = new Set(["p", "look", "githubio"]);
-      const parts = location.pathname.split("/").filter(Boolean);
-      const modeIndex = parts.findIndex((part) => modes.has(part));
       const title = document.querySelector("#title");
       const status = document.querySelector("#status");
       const destination = document.querySelector("#destination");
+      const allParts = location.pathname.split("/").filter(Boolean);
 
       function fail(message) {
         title.textContent = "无法读取编码网址";
         status.textContent = message;
       }
 
-      if (modeIndex === -1 || modeIndex === parts.length - 1) {
-        fail("地址中没有找到有效编码。");
-        return;
-      }
-
-      const baseParts = parts.slice(0, modeIndex);
-      const basePath = `/${baseParts.length ? `${baseParts.join("/")}/` : ""}`;
-      const mode = parts[modeIndex];
-      let payload;
-      try {
-        payload = decodeURIComponent(parts.slice(modeIndex + 1).join("/"));
-      } catch {
-        fail("编码包含无效的转义字符。");
-        return;
-      }
-
-      const script = document.createElement("script");
-      script.src = `${location.origin}${basePath}codec.js`;
-      script.onload = () => {
-        try {
-          const codec = window.UrlGlyphCodec;
-          if (!codec) throw new Error("编码模块未加载");
-          const decoded = codec.decode(payload, mode);
-          if (!codec.isSafeHttpUrl(decoded)) throw new Error("解码结果不是 HTTP(S) 网址");
-          const parsed = new URL(decoded);
-          document.querySelector("#host").textContent = parsed.hostname;
-          document.querySelector("#target").textContent = decoded;
-          document.querySelector("#continue").href = decoded;
-          document.querySelector("#cancel").href = `${location.origin}${basePath}`;
-          title.textContent = "确认访问目标";
-          status.hidden = true;
-          destination.hidden = false;
-        } catch (error) {
-          fail(error.message || "无法解码此网址。");
+      function inferMode(payload, codec) {
+        if (/^[p.]+$/.test(payload)) return codec.MODES.P_RUNS;
+        if (/^[pρрᴘ]+$/u.test(payload)) return codec.MODES.LOOKALIKE;
+        if (/^(?:github\.io)(?:\.github\.io){0,3}(?:\/(?:github\.io)(?:\.github\.io){0,3})*$/.test(payload)) {
+          return codec.MODES.GITHUB_IO;
         }
-      };
-      script.onerror = () => fail("无法加载编码模块。");
-      document.head.appendChild(script);
+        throw new Error("无法识别编码类型");
+      }
+
+      function loadCodec(basePath, payloadParts) {
+        const script = document.createElement("script");
+        script.src = `${location.origin}${basePath}codec.js`;
+        script.onload = () => {
+          try {
+            const codec = window.UrlGlyphCodec;
+            if (!codec) throw new Error("编码模块未加载");
+            const payload = decodeURIComponent(payloadParts.join("/"));
+            const mode = inferMode(payload, codec);
+            const decoded = codec.decode(payload, mode);
+            if (!codec.isSafeHttpUrl(decoded)) throw new Error("解码结果不是 HTTP(S) 网址");
+            const parsed = new URL(decoded);
+            document.querySelector("#host").textContent = parsed.hostname;
+            document.querySelector("#target").textContent = decoded;
+            document.querySelector("#continue").href = decoded;
+            document.querySelector("#cancel").href = `${location.origin}${basePath}`;
+            title.textContent = "确认访问目标";
+            status.hidden = true;
+            destination.hidden = false;
+          } catch (error) {
+            fail(error.message || "无法解码此网址。");
+          }
+        };
+        script.onerror = () => {
+          if (basePath === "/" && allParts.length > 1) {
+            loadCodec(`/${allParts[0]}/`, allParts.slice(1));
+          } else {
+            fail("无法加载编码模块。");
+          }
+        };
+        document.head.appendChild(script);
+      }
+
+      if (!allParts.length) {
+        fail("地址中没有找到编码。");
+        return;
+      }
+
+      loadCodec("/", allParts);
     })();
   </script>
 </body>
